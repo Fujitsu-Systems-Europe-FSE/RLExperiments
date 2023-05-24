@@ -1,8 +1,9 @@
+from abc import ABC
 from torch import nn
 from apheleia.model import NeuralNet
 
 
-class DeepQNet(NeuralNet):
+class DeepQNet(NeuralNet, ABC):
 
     def __init__(self, opts):
         super(DeepQNet, self).__init__()

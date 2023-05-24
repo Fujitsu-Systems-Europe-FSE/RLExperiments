@@ -2,25 +2,24 @@ from itertools import count
 from dataset.replay_memory import Transition
 from apheleia.trainer.rl_trainer import RLTrainer
 from apheleia.metrics.metric_store import MetricStore
+from apheleia.metrics.average_meter import AverageMeter
 
 import math
 import torch
 import random
 
 
-GAMMA = 0.99
-EPS_START = 0.9
-EPS_END = 0.05
-EPS_DECAY = 1000
-TAU = 0.005
-
-
 class DQNTrainer(RLTrainer):
 
     def __init__(self, opts, net, optims, scheds, loss, validator, metrics: MetricStore, ctx, *args, **kwargs):
         super().__init__(opts, net, optims, scheds, loss, validator, metrics, ctx, 'RL', *args, **kwargs)
-        # TODO Move to metric store
-        self._episode_durations = []
+        self._gamma = 0.99
+        self._eps_start = 0.9
+        self._eps_end = 0.05
+        self._eps_decay = 1000
+        self._tau = 0.005
+
+        metrics.add_train_metric('episodes/duration', AverageMeter(''))
 
     def _train_loop(self, memory, *args, **kwargs):
         # Initialize the environment and get it's state
@@ -52,12 +51,11 @@ class DQNTrainer(RLTrainer):
             target_net_state_dict = self._net['TargetNet'].state_dict()
             policy_net_state_dict = self._net['PolicyNet'].state_dict()
             for key in policy_net_state_dict:
-                target_net_state_dict[key] = policy_net_state_dict[key] * TAU + target_net_state_dict[key] * (1 - TAU)
+                target_net_state_dict[key] = policy_net_state_dict[key] * self._tau + target_net_state_dict[key] * (1 - self._tau)
             self._net['TargetNet'].load_state_dict(target_net_state_dict)
 
             if done:
-                self._episode_durations.append(t + 1)
-                # plot_durations()
+                self._metrics_store.update_train({'episodes/duration': t + 1})
                 break
 
     def _optimize(self, memory):
@@ -93,7 +91,7 @@ class DQNTrainer(RLTrainer):
         with torch.no_grad():
             next_state_values[non_final_mask] = self._net['TargetNet'](non_final_next_states).max(1)[0]
         # Compute the expected Q values
-        expected_state_action_values = (next_state_values * GAMMA) + reward_batch
+        expected_state_action_values = (next_state_values * self._gamma) + reward_batch
 
         # Compute Huber loss
         loss = self._loss.compute(state_action_values, expected_state_action_values.unsqueeze(1))
@@ -111,7 +109,7 @@ class DQNTrainer(RLTrainer):
 
     def _select_action(self, state):
         sample = random.random()
-        eps_threshold = EPS_END + (EPS_START - EPS_END) * math.exp(-1. * self.global_iter / EPS_DECAY)
+        eps_threshold = self._eps_end + (self._eps_start - self._eps_end) * math.exp(-1. * self.global_iter / self._eps_decay)
         self.global_iter += 1
         if sample > eps_threshold:
             with torch.no_grad():
