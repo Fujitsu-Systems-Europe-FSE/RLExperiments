@@ -1,3 +1,4 @@
+from time import time
 from itertools import count
 from dataset.replay_memory import Transition
 from apheleia.trainer.rl_trainer import RLTrainer
@@ -19,13 +20,15 @@ class DQNTrainer(RLTrainer):
         self._eps_decay = 1000
         self._tau = 0.005
 
-        metrics.add_train_metric('episodes/duration', AverageMeter(''))
+        metrics.add_train_metric('episodes/duration_in_steps', AverageMeter(''))
+        metrics.add_train_metric('episodes/duration_in_secs', AverageMeter(''))
 
     def _train_loop(self, memory, *args, **kwargs):
         # Initialize the environment and get it's state
         state, info = self._environment.reset()
         state = torch.tensor(state, dtype=torch.float32, device=self._ctx[0]).unsqueeze(0)
 
+        t0 = time()
         for t in count():
             action = self._select_action(state)
             observation, reward, terminated, truncated, _ = self._environment.step(action.item())
@@ -55,7 +58,10 @@ class DQNTrainer(RLTrainer):
             self._net['TargetNet'].load_state_dict(target_net_state_dict)
 
             if done:
-                self._metrics_store.update_train({'episodes/duration': t + 1})
+                self._metrics_store.update_train({
+                    'episodes/duration_in_steps': t + 1,
+                    'episodes/duration_in_secs': time() - t0
+                })
                 break
 
     def _optimize(self, memory):
