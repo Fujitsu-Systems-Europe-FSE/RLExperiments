@@ -1,2 +1,5 @@
-pytorch
-gymnasium
+torch==2.0.1+cu118
+numpy==1.23.5
+gymnasium[classic-control]
+vizdoom
+git+https://github.com/Fujitsu-Systems-Europe-FSE/Apheleia.git
