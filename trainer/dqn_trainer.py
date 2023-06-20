@@ -14,10 +14,10 @@ class DQNTrainer(RLTrainer):
 
     def __init__(self, opts, net, optims, scheds, loss, validator, metrics: MetricStore, ctx, *args, **kwargs):
         super().__init__(opts, net, optims, scheds, loss, validator, metrics, ctx, 'RL', *args, **kwargs)
+        self._add_metrics()
         self._env_explorer = EpsilonGreedy(opts, ctx, self._select_action)
         # TODO Move in ModelStore ?
         self._target_net = self._create_target_net(DeepQNet)
-        self._add_metrics()
 
     def _create_target_net(self, netclazz):
         net = netclazz(self._opts)
