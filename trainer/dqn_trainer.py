@@ -1,27 +1,34 @@
+from torch import nn
 from time import time
 from itertools import count
-from dataset.replay_memory import Transition
+from model.dqn.deep_q_net import DeepQNet
+from utils.env_exploration import EpsilonGreedy
 from apheleia.trainer.rl_trainer import RLTrainer
 from apheleia.metrics.metric_store import MetricStore
-from apheleia.metrics.average_meter import AverageMeter
+from apheleia.metrics.meters import AverageMeter, SumMeter
 
-import math
 import torch
-import random
 
 
 class DQNTrainer(RLTrainer):
 
     def __init__(self, opts, net, optims, scheds, loss, validator, metrics: MetricStore, ctx, *args, **kwargs):
         super().__init__(opts, net, optims, scheds, loss, validator, metrics, ctx, 'RL', *args, **kwargs)
-        self._gamma = 0.99
-        self._eps_start = 0.9
-        self._eps_end = 0.05
-        self._eps_decay = 1000
-        self._tau = 0.005
+        self._env_explorer = EpsilonGreedy(opts, ctx, self._select_action)
+        # TODO Move in ModelStore ?
+        self._target_net = self._create_target_net(DeepQNet)
+        self._add_metrics()
 
-        metrics.add_train_metric('episodes/duration_in_steps', AverageMeter(''))
-        metrics.add_train_metric('episodes/duration_in_secs', AverageMeter(''))
+    def _create_target_net(self, netclazz):
+        net = netclazz(self._opts)
+        target_net = nn.DataParallel(net, device_ids=self._ctx).to(self._ctx[0])
+        target_net.load_state_dict(self._net.get(net.model_name()).state_dict())
+        return target_net
+
+    def _add_metrics(self):
+        self._metrics_store.add_train_metric('rewards/episode_rewards', SumMeter(''))
+        self._metrics_store.add_train_metric('episodes/duration_in_steps', AverageMeter(''))
+        self._metrics_store.add_train_metric('episodes/duration_in_secs', AverageMeter(''))
 
     def _train_loop(self, memory, *args, **kwargs):
         # Initialize the environment and get it's state
@@ -30,9 +37,10 @@ class DQNTrainer(RLTrainer):
 
         t0 = time()
         for t in count():
-            action = self._select_action(state)
+            action = self._env_explorer.explore(state, self.global_iter)
             observation, reward, terminated, truncated, _ = self._environment.step(action.item())
             reward = torch.tensor([reward]).to(self._ctx[0])
+            truncated = (truncated and self._opts.max_steps is None) or (t == self._opts.max_steps)
             done = terminated or truncated
             next_state = None if terminated else torch.tensor(observation).to(self._ctx[0]).unsqueeze(0)
 
@@ -44,8 +52,9 @@ class DQNTrainer(RLTrainer):
 
             # Perform one step of the optimization (on the policy network)
             self._optimize(memory)
-            self._soft_update()
+            self._apply_soft_updates()
 
+            self._metrics_store.update_train({'rewards/episode_rewards': reward.item()})
             if done:
                 self._metrics_store.update_train({
                     'episodes/duration_in_steps': t + 1,
@@ -53,14 +62,19 @@ class DQNTrainer(RLTrainer):
                 })
                 break
 
-    def _soft_update(self):
+            self.global_iter += 1
+
+    def _apply_soft_updates(self):
+        self._soft_update(self._net['PolicyNet'], self._target_net)
+
+    def _soft_update(self, net, target_net):
         # Soft update of the target network's weights
-        # θ′ ← τ θ + (1 −τ )θ′
-        target_net_state_dict = self._net['TargetNet'].state_dict()
-        policy_net_state_dict = self._net['PolicyNet'].state_dict()
-        for key in policy_net_state_dict:
-            target_net_state_dict[key] = policy_net_state_dict[key] * self._tau + target_net_state_dict[key] * (1 - self._tau)
-        self._net['TargetNet'].load_state_dict(target_net_state_dict)
+        # θ′ ← τθ + (1 − τ)θ′
+        target_state_dict = target_net.state_dict()
+        net_state_dict = net.state_dict()
+        for key in net_state_dict:
+            target_state_dict[key] = net_state_dict[key] * self._opts.tau + target_state_dict[key] * (1 - self._opts.tau)
+        target_net.load_state_dict(target_state_dict)
 
     def _optimize(self, memory):
         if len(memory) < self._opts.batch_size:
@@ -88,12 +102,12 @@ class DQNTrainer(RLTrainer):
         # state value or 0 in case the state was final.
         next_state_action_values = torch.zeros(self._opts.batch_size).to(self._ctx[0])
         with torch.no_grad():
-            estimated_rewards = self._net['TargetNet'](non_final_next_states)
+            estimated_rewards = self._target_net(non_final_next_states)
             max_rewards, max_indexes = estimated_rewards.max(dim=1)
             next_state_action_values[non_final_mask] = max_rewards
         # Compute the expected Q values
         # r + gamma * Q(s', a)
-        expected_next_state_action_values = torch.cat(reward, dim=0) + self._gamma * next_state_action_values
+        expected_next_state_action_values = torch.cat(reward, dim=0) + self._opts.gamma * next_state_action_values
 
         # Compute temporal difference error
         loss = self._loss.compute(state_action_values, expected_next_state_action_values.unsqueeze(1))
@@ -110,20 +124,12 @@ class DQNTrainer(RLTrainer):
         self._metrics_store.update_train(self._loss.decompose())
 
     def _select_action(self, state):
-        # Here we use an epsilon greedy policy.
-        # Sometimes we use our model for choosing an action. Sometimes we are just sampling a random one
-        sample = random.random()
-        eps_threshold = self._eps_end + (self._eps_start - self._eps_end) * math.exp(-1. * self.global_iter / self._eps_decay)
-        self.global_iter += 1
-        if sample > eps_threshold:
-            with torch.no_grad():
-                # Pick action with the larger expected reward.
-                # argmax Q(s, a)
-                estimated_rewards = self._net['PolicyNet'](state)
-                max_reward, max_index = estimated_rewards.max(dim=1)
-                return max_index.view(1, 1)
-        else:
-            return torch.tensor([[self._environment.action_space.sample()]], dtype=torch.long).to(self._ctx[0])
+        with torch.no_grad():
+            # Pick action with the larger expected reward.
+            # argmax Q(s, a)
+            estimated_rewards = self._net['PolicyNet'](state)
+            max_reward, max_index = estimated_rewards.max(dim=1)
+            return max_index.view(1, 1)
 
     def _save_checkpoints(self, out_filename):
         pass

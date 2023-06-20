@@ -10,7 +10,7 @@ class DeepQNet(NeuralNet, ABC):
         n_layers = 2
         self._stages = []
         for i in range(n_layers):
-            in_dim = opts.n_observations if i == 0 else opts.hidden_dim
+            in_dim = opts.n_states if i == 0 else opts.hidden_dim
             self._stages.append(DeepQNet.build_stack(in_dim, opts.hidden_dim))
         self._stages = nn.Sequential(
             *self._stages,
@@ -27,22 +27,9 @@ class DeepQNet(NeuralNet, ABC):
     def forward(self, x):
         return self._stages(x)
 
-
-class TargetNet(DeepQNet):
-    @staticmethod
-    def model_name():
-        return 'TargetNet'
-
-    @staticmethod
-    def _weight_init(self):
-        pass
-
-
-class PolicyNet(DeepQNet):
     @staticmethod
     def model_name():
         return 'PolicyNet'
 
-    @staticmethod
     def _weight_init(self):
         pass
