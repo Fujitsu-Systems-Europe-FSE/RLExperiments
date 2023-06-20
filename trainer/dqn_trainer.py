@@ -51,8 +51,7 @@ class DQNTrainer(RLTrainer):
             state = next_state
 
             # Perform one step of the optimization (on the policy network)
-            self._optimize(memory)
-            self._apply_soft_updates()
+            self._sample_and_optimize(memory)
 
             self._metrics_store.update_train({'rewards/episode_rewards': reward.item()})
             if done:
@@ -76,24 +75,33 @@ class DQNTrainer(RLTrainer):
             target_state_dict[key] = net_state_dict[key] * self._opts.tau + target_state_dict[key] * (1 - self._opts.tau)
         target_net.load_state_dict(target_state_dict)
 
-    def _optimize(self, memory):
+    def _sample_and_optimize(self, memory):
         if len(memory) < self._opts.batch_size:
             return
 
-        action, next_state, reward, state = memory.sample(self._opts.batch_size)
-
+        actions, next_states, rewards, states = memory.sample(self._opts.batch_size)
         # Compute a mask of non-final states and concatenate the batch elements
         # (a final state would've been the one after which simulation ended)
-        non_final_states = list(map(lambda s: s is not None, next_state))
-        non_final_mask = torch.tensor(non_final_states).to(self._ctx[0])
-        non_final_next_states = torch.cat([s for s in next_state if s is not None])
+        non_final_states = list(map(lambda s: s is not None, next_states))
+        non_final_masks = torch.tensor(non_final_states).to(self._ctx[0])
+        non_final_next_states = torch.cat([s for s in next_states if s is not None])
 
+        actions = torch.cat(actions, dim=0)
+        rewards = torch.cat(rewards, dim=0)
+        states = torch.cat(states, dim=0)
+
+        self._optimize(actions, non_final_next_states, rewards, states, non_final_masks)
+        self._apply_soft_updates()
+
+        # self._log_iteration(batch_idx)
+        self._metrics_store.update_train(self._loss.decompose())
+
+    def _optimize(self, actions, next_states, rewards, states, masks):
         # Compute Q(s_t, a) - the model computes Q(s_t), then we select the
         # columns of actions taken. These are the actions which would've been taken
         # for each batch state according to policy_net
-
         with torch.cuda.amp.autocast(self._opts.fp16):
-            state_action_values = self._net['PolicyNet'](torch.cat(state, dim=0)).gather(1, torch.cat(action, dim=0))
+            state_action_values = self._net['PolicyNet'](states).gather(1, actions)
 
         # Compute V(s_{t+1}) for all next states.
         # Expected values of actions for non_final_next_states are computed based
@@ -102,12 +110,12 @@ class DQNTrainer(RLTrainer):
         # state value or 0 in case the state was final.
         next_state_action_values = torch.zeros(self._opts.batch_size).to(self._ctx[0])
         with torch.no_grad():
-            estimated_rewards = self._target_net(non_final_next_states)
+            estimated_rewards = self._target_net(next_states)
             max_rewards, max_indexes = estimated_rewards.max(dim=1)
-            next_state_action_values[non_final_mask] = max_rewards
+            next_state_action_values[masks] = max_rewards
         # Compute the expected Q values
         # r + gamma * Q(s', a)
-        expected_next_state_action_values = torch.cat(reward, dim=0) + self._opts.gamma * next_state_action_values
+        expected_next_state_action_values = rewards + self._opts.gamma * next_state_action_values
 
         # Compute temporal difference error
         loss = self._loss.compute(state_action_values, expected_next_state_action_values.unsqueeze(1))
@@ -119,9 +127,6 @@ class DQNTrainer(RLTrainer):
         torch.nn.utils.clip_grad_value_(self._net['PolicyNet'].parameters(), 100)
         self._scaler.step(self._optimizer['PolicyNet'])
         self._scaler.update()
-
-        # self._log_iteration(batch_idx)
-        self._metrics_store.update_train(self._loss.decompose())
 
     def _select_action(self, state):
         with torch.no_grad():
