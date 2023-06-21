@@ -15,11 +15,14 @@ class DQNTrainer(RLTrainer):
     def __init__(self, opts, net, optims, scheds, loss, validator, metrics: MetricStore, ctx, *args, **kwargs):
         super().__init__(opts, net, optims, scheds, loss, validator, metrics, ctx, 'RL', *args, **kwargs)
         self._add_metrics()
-        self._env_explorer = EpsilonGreedy(opts, ctx, self._select_action)
-        # TODO Move in ModelStore ?
-        self._target_net = self._create_target_net(DeepQNet)
+        self._initial_setup()
 
-    def _create_target_net(self, netclazz):
+    def _initial_setup(self):
+        self._env_explorer = EpsilonGreedy(self._opts, self._ctx, self._select_action)
+        # TODO Move in ModelStore ?
+        self._target_net = self._targetize_net(DeepQNet)
+
+    def _targetize_net(self, netclazz):
         net = netclazz(self._opts)
         target_net = nn.DataParallel(net, device_ids=self._ctx).to(self._ctx[0])
         target_net.load_state_dict(self._net.get(net.model_name()).state_dict())
@@ -38,8 +41,9 @@ class DQNTrainer(RLTrainer):
         t0 = time()
         for t in count():
             action = self._env_explorer.explore(state, self.global_iter)
-            observation, reward, terminated, truncated, _ = self._environment.step(action.item())
-            reward = torch.tensor([reward]).to(self._ctx[0])
+            formatted_action = action.item() if hasattr(self._environment.action_space, 'n') else action.cpu().numpy().flatten()
+            observation, reward, terminated, truncated, _ = self._environment.step(formatted_action)
+            reward = torch.tensor([[reward]]).to(self._ctx[0])
             truncated = (truncated and self._opts.max_steps is None) or (t == self._opts.max_steps)
             done = terminated or truncated
             next_state = None if terminated else torch.tensor(observation).to(self._ctx[0]).unsqueeze(0)
@@ -79,24 +83,15 @@ class DQNTrainer(RLTrainer):
         if len(memory) < self._opts.batch_size:
             return
 
-        actions, next_states, rewards, states = memory.sample(self._opts.batch_size)
-        # Compute a mask of non-final states and concatenate the batch elements
-        # (a final state would've been the one after which simulation ended)
-        non_final_states = list(map(lambda s: s is not None, next_states))
-        non_final_masks = torch.tensor(non_final_states).to(self._ctx[0])
-        non_final_next_states = torch.cat([s for s in next_states if s is not None])
+        states, actions, next_states, rewards, masks = memory.sample(self._opts.batch_size)
 
-        actions = torch.cat(actions, dim=0)
-        rewards = torch.cat(rewards, dim=0)
-        states = torch.cat(states, dim=0)
-
-        self._optimize(actions, non_final_next_states, rewards, states, non_final_masks)
+        self._optimize(states, actions, next_states, rewards, masks)
         self._apply_soft_updates()
 
         # self._log_iteration(batch_idx)
         self._metrics_store.update_train(self._loss.decompose())
 
-    def _optimize(self, actions, next_states, rewards, states, masks):
+    def _optimize(self, states, actions, next_states, rewards, masks):
         # Compute Q(s_t, a) - the model computes Q(s_t), then we select the
         # columns of actions taken. These are the actions which would've been taken
         # for each batch state according to policy_net
@@ -108,17 +103,16 @@ class DQNTrainer(RLTrainer):
         # on the "older" target_net; selecting their best reward with max(1)[0].
         # This is merged based on the mask, such that we'll have either the expected
         # state value or 0 in case the state was final.
-        next_state_action_values = torch.zeros(self._opts.batch_size).to(self._ctx[0])
         with torch.no_grad():
-            estimated_rewards = self._target_net(next_states)
-            max_rewards, max_indexes = estimated_rewards.max(dim=1)
-            next_state_action_values[masks] = max_rewards
+            estimated_rewards = self._target_net(next_states) * masks
+            next_state_action_values, _ = estimated_rewards.max(keepdims=True, dim=1)
+
         # Compute the expected Q values
         # r + gamma * Q(s', a)
         expected_next_state_action_values = rewards + self._opts.gamma * next_state_action_values
 
         # Compute temporal difference error
-        loss = self._loss.compute(state_action_values, expected_next_state_action_values.unsqueeze(1))
+        loss = self._loss.compute(state_action_values, expected_next_state_action_values)
 
         # Same optimizer used for all models
         self._optimizer['PolicyNet'].zero_grad()
