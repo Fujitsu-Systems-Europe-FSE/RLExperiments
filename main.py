@@ -72,9 +72,9 @@ if __name__ == '__main__':
     train_parser = rl_exp.cli.get_subparser('train')
     train_parser.add_argument('--hidden-dim', type=int, default=128, help='Networks hidden dimension')
     train_parser.add_argument('--max-steps', type=int, help='Max steps during an episode')
-    train_parser.add_argument('--mem-size', type=int, default=1e6, help='Replay memory size')
-    train_parser.add_argument('--gamma', type=int, default=0.99, help='Discount value')
-    train_parser.add_argument('--tau', type=int, default=5e-3, help='Soft update merging factor')
+    train_parser.add_argument('--mem-size', type=int, default=int(1e6), help='Replay memory size')
+    train_parser.add_argument('--gamma', type=float, default=0.99, help='Discount value')
+    train_parser.add_argument('--tau', type=float, default=5e-3, help='Soft update merging factor')
     train_parser.add_argument('--env', dest='env_name', type=str, default='MountainCar-v0', help='Training environment name')
     train_parser.add_argument('--render-mode', type=str, default=None, help='Environment render mode')
 

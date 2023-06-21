@@ -14,14 +14,14 @@ class DeepQNet(NeuralNet, ABC):
             self._stages.append(DeepQNet.build_stack(in_dim, opts.hidden_dim))
         self._stages = nn.Sequential(
             *self._stages,
-            DeepQNet.build_stack(opts.hidden_dim, opts.n_actions, with_relu=False)
+            nn.Linear(opts.hidden_dim, opts.n_actions, bias=False)
         )
 
     @staticmethod
-    def build_stack(in_dim, out_dim, with_relu=True):
+    def build_stack(in_dim, out_dim):
         return nn.Sequential(
             nn.Linear(in_dim, out_dim),
-            nn.ReLU() if with_relu else nn.Identity()
+            nn.ReLU()
         )
 
     def forward(self, x):
