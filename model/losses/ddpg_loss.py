@@ -20,6 +20,6 @@ class DDPGLoss(Loss):
         self._critic_loss_value = self._mse_loss(prediction, target)
         return self._critic_loss_value
 
-    def compute_actor_loss(self, critic, actor, state):
-        self._actor_loss_value = -critic(state, actor(state)).mean()
+    def compute_actor_loss(self, critic, actions, states):
+        self._actor_loss_value = -critic(states, actions).mean()
         return self._actor_loss_value

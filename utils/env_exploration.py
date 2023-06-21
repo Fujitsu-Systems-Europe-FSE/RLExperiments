@@ -46,34 +46,68 @@ class Gaussian(EnvExplorer):
     def explore(self, state, global_iter, **kwargs):
         action = self._select_action(state)
         noise = torch.normal(self._mu, self._sigma, size=action.shape).to(action.device)
-        return action + noise.clip(-self._opts.max_action, self._opts.max_action)
+        return (action + noise).clip(-self._opts.max_action, self._opts.max_action)
 
 
-class OrnsteinUlhenbeckNoise:
-    """Ornstein-Uhlenbeck process.
+class OrnsteinUlhenbeck(EnvExplorer):
+    def __init__(self, opts, ctx, action_delegate, mu=0., sigma=.2, theta=0.15, dt=1e-2, initial_noise=None):
+        super().__init__(opts, ctx, action_delegate)
 
-    The OU_Noise class has four attributes
-
-        size: the size of the noise vector to be generated
-        mu: the mean of the noise, set to 0 by default
-        theta: the rate of mean reversion, controlling how quickly the noise returns to the mean
-        sigma: the volatility of the noise, controlling the magnitude of fluctuations
-    """
-    def __init__(self, size, seed, mu=0., theta=0.15, sigma=0.25):
-        self.mu = mu * np.ones(size)
         self.theta = theta
-        self.sigma = sigma
-        self.seed = random.seed(seed)
+        self.mu = mu * np.ones((1, 1))  # mean
+        self.sigma = sigma * np.ones((1, 1))   # std
+        self.dt = dt
+        self.initial_noise = initial_noise
+
         self.reset()
 
-    def reset(self):
-        """Reset the internal state (= noise) to mean (mu)."""
-        self.state = copy.copy(self.mu)
+    def explore(self, state, global_iter, *args, **kwargs):
+        # Formula taken from https://www.wikipedia.org/wiki/Ornstein-Uhlenbeck_process.
+        noise = (
+            self.prev_noise
+            + self.theta * (self.mu - self.prev_noise) * self.dt
+            + self.sigma * np.sqrt(self.dt) * np.random.normal(size=self.mu.shape)
+        )
+        # Store x into x_prev
+        # Makes next noise dependent on current one
+        self.prev_noise = noise
 
-    def sample(self):
-        """Update internal state and return it as a noise sample.
-        This method uses the current state of the noise and generates the next sample
-        """
-        dx = self.theta * (self.mu - self.state) + self.sigma * np.array([np.random.normal() for _ in range(len(self.state))])
-        self.state += dx
-        return self.state
+        action = self._select_action(state)
+        noise = torch.tensor(noise, dtype=torch.float32).to(action.device)
+        return (noise + action).clip(-self._opts.max_action, self._opts.max_action)
+
+    def reset(self):
+        if self.initial_noise is not None:
+            self.prev_noise = self.initial_noise
+        else:
+            self.prev_noise = np.zeros_like(self.mu)
+
+
+# class OrnsteinUlhenbeckNoise:
+#     """Ornstein-Uhlenbeck process.
+#
+#     The OU_Noise class has four attributes
+#
+#         size: the size of the noise vector to be generated
+#         mu: the mean of the noise, set to 0 by default
+#         theta: the rate of mean reversion, controlling how quickly the noise returns to the mean
+#         sigma: the volatility of the noise, controlling the magnitude of fluctuations
+#     """
+#     def __init__(self, size, seed, mu=0., theta=0.15, sigma=0.25):
+#         self.mu = mu * np.ones(size)
+#         self.theta = theta
+#         self.sigma = sigma
+#         self.seed = random.seed(seed)
+#         self.reset()
+#
+#     def reset(self):
+#         """Reset the internal state (= noise) to mean (mu)."""
+#         self.state = copy.copy(self.mu)
+#
+#     def sample(self):
+#         """Update internal state and return it as a noise sample.
+#         This method uses the current state of the noise and generates the next sample
+#         """
+#         dx = self.theta * (self.mu - self.state) + self.sigma * np.array([np.random.normal() for _ in range(len(self.state))])
+#         self.state += dx
+#         return self.state

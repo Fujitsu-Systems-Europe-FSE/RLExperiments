@@ -1,8 +1,8 @@
 from model.ddpg.actor import Actor
 from model.ddpg.critic import Critic
 from trainer.dqn_trainer import DQNTrainer
-from utils.env_exploration import Gaussian
 from apheleia.metrics.metric_store import MetricStore
+from utils.env_exploration import Gaussian, OrnsteinUlhenbeck
 
 import torch
 
@@ -12,7 +12,8 @@ class ActorCriticTrainer(DQNTrainer):
         super().__init__(opts, net, optims, scheds, loss, validator, metrics, ctx, 'DDPG', *args, **kwargs)
 
     def _initial_setup(self):
-        self._env_explorer = Gaussian(self._opts, self._ctx, self._select_action)
+        # self._env_explorer = Gaussian(self._opts, self._ctx, self._select_action)
+        self._env_explorer = OrnsteinUlhenbeck(self._opts, self._ctx, self._select_action)
         # TODO Move in ModelStore ?
         self._target_actor = self._targetize_net(Actor)
         self._target_critic = self._targetize_net(Critic)
@@ -21,7 +22,7 @@ class ActorCriticTrainer(DQNTrainer):
         self._soft_update(self._net['Actor'], self._target_actor)
         self._soft_update(self._net['Critic'], self._target_critic)
 
-    def _optimize(self, states, actions, next_states, rewards, masks):
+    def _optimize_critic(self, states, actions, next_states, rewards, masks):
         # compute state_action_values for St+1
         with torch.no_grad():
             # produce a continuous action given a state
@@ -29,7 +30,7 @@ class ActorCriticTrainer(DQNTrainer):
             # evaluate actions quality for a given state
             next_state_action_values = self._target_critic(next_states, estimated_actions) * masks
 
-        expected_next_state_action_values = rewards + self._opts.gamma * next_state_action_values
+            expected_next_state_action_values = rewards + self._opts.gamma * next_state_action_values
 
         # state_action_values for St
         with torch.cuda.amp.autocast(self._opts.fp16):
@@ -43,14 +44,20 @@ class ActorCriticTrainer(DQNTrainer):
         self._scaler.step(self._optimizer['Critic'])
         self._scaler.update()
 
+    def _optimize_actor(self, states):
         with torch.cuda.amp.autocast(self._opts.fp16):
-            actor_loss = self._loss.compute_actor_loss(self._net['Critic'], self._net['Actor'], states)
+            actions = self._net['Actor'](states)
+            actor_loss = self._loss.compute_actor_loss(self._net['Critic'], actions, states)
 
         # Optimize the actor
         self._optimizer['Actor'].zero_grad()
         self._scaler.scale(actor_loss).backward()
         self._scaler.step(self._optimizer['Actor'])
         self._scaler.update()
+
+    def _optimize(self, states, actions, next_states, rewards, masks):
+        self._optimize_critic(states, actions, next_states, rewards, masks)
+        self._optimize_actor(states)
 
     def _select_action(self, state):
         self._net['Actor'].eval()
