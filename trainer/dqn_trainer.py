@@ -43,7 +43,7 @@ class DQNTrainer(RLTrainer):
             action = self._env_explorer.explore(state, self.global_iter)
             formatted_action = action.item() if hasattr(self._environment.action_space, 'n') else action.cpu().numpy().flatten()
             observation, reward, terminated, truncated, _ = self._environment.step(formatted_action)
-            reward = torch.tensor([[reward]]).to(self._ctx[0])
+            reward = torch.tensor([[reward]], dtype=torch.float32).to(self._ctx[0])
             truncated = (truncated and self._opts.max_steps is None) or (t == self._opts.max_steps)
             done = terminated or truncated
             next_state = None if terminated else torch.tensor(observation).to(self._ctx[0]).unsqueeze(0)
