@@ -48,7 +48,7 @@ class ActorCriticTrainer(DQNTrainer):
 
         # Optimize the actor
         self._optimizer['Actor'].zero_grad()
-        self._scaler.scale(actor_loss)
+        self._scaler.scale(actor_loss).backward()
         self._scaler.step(self._optimizer['Actor'])
         self._scaler.update()
 
