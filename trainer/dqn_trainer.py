@@ -29,7 +29,9 @@ class DQNTrainer(RLTrainer):
         return target_net
 
     def _add_metrics(self):
-        self._metrics_store.add_train_metric('rewards/episode_rewards', SumMeter(''))
+        reference_metric = SumMeter('')
+        self._metrics_store.add_target_metric(reference_metric)
+        self._metrics_store.add_train_metric('rewards/episode_rewards', reference_metric)
         self._metrics_store.add_train_metric('episodes/duration_in_steps', AverageMeter(''))
         self._metrics_store.add_train_metric('episodes/duration_in_secs', AverageMeter(''))
 
