@@ -1,4 +1,5 @@
 from torch import nn
+from torch.nn import init
 from model.ddpg import DDPGNet
 
 import torch
@@ -28,23 +29,21 @@ class Critic(DDPGNet):
             in_dim = 64 if i == 0 else self._opts.hidden_dim
             self._stages.append(Critic.build_stack(in_dim, self._opts.hidden_dim, with_bn=batchnorm))
 
-        self._stages = nn.Sequential(
-            *self._stages,
-            nn.Linear(self._opts.hidden_dim, self._opts.n_actions, bias=False)
-        )
+        self._stages = nn.Sequential(*self._stages)
+        self._proj = nn.Linear(self._opts.hidden_dim, self._opts.n_actions, bias=False)
 
     def forward(self, state, action):
         x_state = self._state_stages(state)
         x_action = self._action_stages(action)
         x = torch.cat([x_state, x_action], dim=-1)
-        return self._stages(x)
+        x = self._stages(x)
+        return self._proj(x)
 
     @staticmethod
     def model_name():
         return 'Critic'
 
     def _weight_init(self):
-        pass
-        # self._state_stages.append(get_initializer('relu'))
-        # self._action_stages.append(get_initializer('relu'))
-        # self._stages.append(get_initializer('relu'))
+        init.uniform_(self._proj.weight.data, -3e-3, 3e-3)
+        if self._proj.bias is not None:
+            init.uniform_(self._proj.bias.data, -3e-3, 3e-3)
