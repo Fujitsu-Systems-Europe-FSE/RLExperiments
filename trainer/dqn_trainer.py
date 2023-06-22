@@ -130,9 +130,6 @@ class DQNTrainer(RLTrainer):
             max_reward, max_index = estimated_rewards.max(dim=1)
             return max_index.view(1, 1)
 
-    def _save_checkpoints(self, out_filename):
-        pass
-
     def _report_stats(self, *args):
         pass
 

@@ -66,9 +66,6 @@ class ActorCriticTrainer(DQNTrainer):
         self._net['Actor'].train()
         return action
 
-    def _save_checkpoints(self, out_filename):
-        pass
-
     def _report_stats(self, *args):
         pass
 
