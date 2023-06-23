@@ -1,26 +1,25 @@
 from torch import nn
 from torch.nn import init
-from model.ddpg import DDPGNet
+from model import build_dense_stack
 from torch.nn import functional as F
+from apheleia.model import NeuralNet
 
 
-class Actor(DDPGNet):
+class Actor(NeuralNet):
 
     def __init__(self, opts):
         super().__init__(opts)
-        self._rescale_factor = self._opts.max_action
+        self._rescale_factor = self._opts.max_action if hasattr(self._opts, 'max_action') else 1
 
     def _build_structure(self):
         n_layers = 2
-        # TODO Batchnorm currently has detrimental effects
-        batchnorm = False
 
-        self._stages = []
+        stages = []
         for i in range(n_layers):
             in_dim = self._opts.n_states if i == 0 else self._opts.hidden_dim
-            self._stages.append(Actor.build_stack(in_dim, self._opts.hidden_dim, with_bn=batchnorm))
+            stages.append(build_dense_stack(in_dim, self._opts.hidden_dim, with_bn=self._opts.with_bn))
 
-        self._stages = nn.Sequential(*self._stages)
+        self._stages = nn.Sequential(*stages)
         self._proj = nn.Linear(self._opts.hidden_dim, self._opts.n_actions, bias=False)
 
     def forward(self, x):
