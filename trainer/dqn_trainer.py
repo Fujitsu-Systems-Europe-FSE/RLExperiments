@@ -1,7 +1,6 @@
 from torch import nn
 from time import time
 from itertools import count
-from model.dqn.deep_q_net import DeepQNet
 from utils.env_exploration import EpsilonGreedy
 from apheleia.trainer.rl_trainer import RLTrainer
 from apheleia.metrics.metric_store import MetricStore
@@ -20,7 +19,8 @@ class DQNTrainer(RLTrainer):
     def _initial_setup(self):
         self._env_explorer = EpsilonGreedy(self._opts, self._ctx, self._select_action)
         # TODO Move in ModelStore ?
-        self._target_net = self._targetize_net(DeepQNet)
+        clazz = self._net['PolicyNet'].module.__class__
+        self._target_net = self._targetize_net(clazz)
 
     def _targetize_net(self, netclazz):
         net = netclazz(self._opts)

@@ -1,5 +1,3 @@
-from model.ddpg.actor import Actor
-from model.ddpg.critic import Critic
 from trainer.dqn_trainer import DQNTrainer
 from apheleia.metrics.metric_store import MetricStore
 from utils.env_exploration import Gaussian, OrnsteinUlhenbeck
@@ -15,8 +13,11 @@ class ActorCriticTrainer(DQNTrainer):
         # self._env_explorer = Gaussian(self._opts, self._ctx, self._select_action)
         self._env_explorer = OrnsteinUlhenbeck(self._opts, self._ctx, self._select_action)
         # TODO Move in ModelStore ?
-        self._target_actor = self._targetize_net(Actor)
-        self._target_critic = self._targetize_net(Critic)
+
+        actor_clazz = self._net['Actor'].module.__class__
+        critic_clazz = self._net['Critic'].module.__class__
+        self._target_actor = self._targetize_net(actor_clazz)
+        self._target_critic = self._targetize_net(critic_clazz)
 
     def _apply_soft_updates(self):
         self._soft_update(self._net['Actor'], self._target_actor)
