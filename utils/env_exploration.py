@@ -33,7 +33,9 @@ class EpsilonGreedy(EnvExplorer):
         if sample > eps_threshold:
             return self._select_action(state)
         else:
-            return torch.tensor([[self._env.action_space.sample()]], dtype=torch.long).to(self._ctx[0])
+            sample = self._env.action_space.sample()
+            sample = torch.tensor([[sample]], dtype=torch.long) if type(sample) == np.int64 else sample['continuous']
+            return sample.to(self._ctx[0])
 
 
 class Gaussian(EnvExplorer):
@@ -46,7 +48,9 @@ class Gaussian(EnvExplorer):
     def explore(self, state, global_iter, **kwargs):
         action = self._select_action(state)
         noise = torch.normal(self._mu, self._sigma, size=action.shape).to(action.device)
-        return (action + noise).clip(-self._opts.max_action, self._opts.max_action)
+        mini = torch.tensor(self._opts.min_actions).to(action.device)
+        maxi = torch.tensor(self._opts.max_actions).to(action.device)
+        return (action + noise).clamp(mini, maxi)
 
 
 class OrnsteinUlhenbeck(EnvExplorer):
@@ -74,7 +78,9 @@ class OrnsteinUlhenbeck(EnvExplorer):
 
         action = self._select_action(state)
         noise = torch.tensor(noise, dtype=torch.float32).to(action.device)
-        return (noise + action).clip(-self._opts.max_action, self._opts.max_action)
+        mini = torch.tensor(self._opts.min_actions).to(action.device)
+        maxi = torch.tensor(self._opts.max_actions).to(action.device)
+        return (noise + action).clamp(mini, maxi)
 
     def reset(self):
         if self.initial_noise is not None:
