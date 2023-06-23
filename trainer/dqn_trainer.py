@@ -78,7 +78,12 @@ class DQNTrainer(RLTrainer):
         target_state_dict = target_net.state_dict()
         net_state_dict = net.state_dict()
         for key in net_state_dict:
-            target_state_dict[key] = net_state_dict[key] * self._opts.tau + target_state_dict[key] * (1 - self._opts.tau)
+            # Soft update except for batchnorm parameters.
+            # https://github.com/DLR-RM/stable-baselines3/pull/1004
+            if 'running_' in key:
+                target_state_dict[key] = net_state_dict[key]
+            else:
+                target_state_dict[key] = net_state_dict[key] * self._opts.tau + target_state_dict[key] * (1 - self._opts.tau)
         target_net.load_state_dict(target_state_dict)
 
     def _sample_and_optimize(self, memory):
