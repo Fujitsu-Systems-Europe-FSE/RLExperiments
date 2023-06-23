@@ -1,7 +1,9 @@
 from apheleia.app import App
-from model.ddpg.actor_dense import Actor
-from model.ddpg.critic_dense import Critic
 from vizdoom import gymnasium_wrapper
+from model.ddpg.actor_cnn import Actor as CnnActor
+from model.ddpg.critic_cnn import Critic as CnnCritic
+from model.ddpg.actor_dense import Actor as DenseActor
+from model.ddpg.critic_dense import Critic as DenseCritic
 from model.dqn.deep_q_net_dense import DeepQNet as DenseDQN
 from model.dqn.deep_q_net_cnn import DeepQNet as CnnDQN
 from model.losses.ddpg_loss import DDPGLoss
@@ -38,7 +40,14 @@ PipelinesCatalog()['RL'] = {
         'metrics': MetricStore
     },
     'dense-ddpg': {
-        'models': [Actor, Critic],
+        'models': [DenseActor, DenseCritic],
+        'optimizers': ['adam', 'adam'],
+        'losses': ['ddpg'],
+        'trainer': ActorCriticTrainer,
+        'metrics': MetricStore
+    },
+    'cnn-ddpg': {
+        'models': [CnnActor, CnnCritic],
         'optimizers': ['adam', 'adam'],
         'losses': ['ddpg'],
         'trainer': ActorCriticTrainer,
@@ -58,9 +67,10 @@ def setup_train_env(args):
     if hasattr(env.action_space, 'n'):
         args.n_actions = int(env.action_space.n)
     else:
-        args.n_actions = env.action_space.shape[0]
-        args.min_action = float(env.action_space.low[0])
-        args.max_action = float(env.action_space.high[0])
+        action_space = env.action_space.spaces['continuous'] if hasattr(env.action_space, 'spaces') else env.action_space
+        args.n_actions = action_space.shape[0]
+        args.min_actions = action_space.low
+        args.max_actions = action_space.high
 
     return ReplayMemory(int(args.mem_size)), None, None
 
