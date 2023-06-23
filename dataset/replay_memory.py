@@ -33,7 +33,7 @@ class ReplayMemory:
         actions = torch.cat(actions_list, dim=0)
         rewards = torch.cat(rewards_list, dim=0)
 
-        next_states = torch.zeros((len(non_final_states), non_final_next_states.shape[-1])).to(non_final_next_states.device)
+        next_states = torch.zeros((len(non_final_states), *non_final_next_states.shape[1:])).to(non_final_next_states.device)
         next_states[non_final_masks] = non_final_next_states
 
         return states, actions, next_states, rewards, non_final_masks.unsqueeze(-1).to(next_states.device)
