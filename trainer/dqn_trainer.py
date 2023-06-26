@@ -1,6 +1,7 @@
 from torch import nn
 from time import time
 from itertools import count
+from apheleia.utils import to_tensor
 from utils.env_exploration import EpsilonGreedy
 from apheleia.trainer.rl_trainer import RLTrainer
 from apheleia.metrics.metric_store import MetricStore
@@ -38,20 +39,22 @@ class DQNTrainer(RLTrainer):
     def _train_loop(self, memory, *args, **kwargs):
         # Initialize the environment and get it's state
         state, info = self._environment.reset()
-        state = torch.tensor(state).unsqueeze(0).to(self._ctx[0])
+        state = to_tensor(state).unsqueeze(0) if memory.transforms is None else memory.transforms(state).unsqueeze(0)
 
         t0 = time()
         for t in count():
-            action = self._env_explorer.explore(state, self.global_iter)
-            formatted_action = action.item() if hasattr(self._environment.action_space, 'n') else action.cpu().numpy().flatten()
-            observation, reward, terminated, truncated, _ = self._environment.step(formatted_action)
-            reward = torch.tensor([[reward]], dtype=torch.float32).to(self._ctx[0])
+            action = self._env_explorer.explore(state.to(self._ctx[0]), self.global_iter).cpu()
+            formatted_action = action.item() if hasattr(self._environment.action_space, 'n') else action.numpy().flatten()
+
+            obs, reward, terminated, truncated, _ = self._environment.step(formatted_action)
+            obs = to_tensor(obs).unsqueeze(0) if memory.transforms is None else memory.transforms(obs).unsqueeze(0)
+
             truncated = (truncated and self._opts.max_steps is None) or (t == self._opts.max_steps)
             done = terminated or truncated
-            next_state = None if terminated else torch.tensor(observation).to(self._ctx[0]).unsqueeze(0)
+            next_state = None if terminated else obs
 
             # Store the transition in memory
-            memory.push(state, action, next_state, reward)
+            memory.push(state, action, next_state, to_tensor([[reward]]))
 
             # Move to the next state
             state = next_state
@@ -59,7 +62,7 @@ class DQNTrainer(RLTrainer):
             # Perform one step of the optimization (on the policy network)
             self._sample_and_optimize(memory)
 
-            self._metrics_store.update_train({'rewards/episode_rewards': reward.item()})
+            self._metrics_store.update_train({'rewards/episode_rewards': reward})
             if done:
                 self._metrics_store.update_train({
                     'episodes/duration_in_steps': t + 1,
@@ -90,7 +93,8 @@ class DQNTrainer(RLTrainer):
         if len(memory) < self._opts.batch_size:
             return
 
-        states, actions, next_states, rewards, masks = memory.sample(self._opts.batch_size)
+        tensors = [t.to(self._ctx[0]) for t in memory.sample(self._opts.batch_size)]
+        states, actions, next_states, rewards, masks = tensors
 
         self._optimize(states, actions, next_states, rewards, masks)
         self._apply_soft_updates()

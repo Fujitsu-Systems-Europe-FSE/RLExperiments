@@ -1,3 +1,5 @@
+from torchvision import transforms
+
 from apheleia.app import App
 from vizdoom import gymnasium_wrapper
 from model.ddpg.actor_cnn import Actor as CnnActor
@@ -57,6 +59,13 @@ PipelinesCatalog()['RL'] = {
 
 
 def setup_train_env(args):
+    memory = ReplayMemory(int(args.mem_size))
+    if args.env_name.startswith('Vizdoom'):
+        memory.add_transforms([
+            transforms.Lambda(lambda x: x['screen']),
+            transforms.ToTensor()
+        ])
+
     env = gym.make(args.env_name, render_mode=args.render_mode)
     state, info = env.reset()
 
@@ -72,20 +81,10 @@ def setup_train_env(args):
         args.min_actions = action_space.low
         args.max_actions = action_space.high
 
-    return ReplayMemory(int(args.mem_size)), None, None
+    return memory, None, None
 
 
 if __name__ == '__main__':
-    # env = gym.make("VizdoomHealthGatheringSupreme-v0", render_mode="human")
-
-    # # Rendering random rollouts for ten episodes
-    # for _ in range(10):
-    #     done = False
-    #     obs = env.reset()
-    #     while not done:
-    #         obs, rew, terminated, truncated, info = env.step(env.action_space.sample())
-    #         done = terminated or truncated
-
     rl_exp = App('RL-Experiments', with_dataset=False)
     train_parser = rl_exp.cli.get_subparser('train')
     train_parser.add_argument('--hidden-dim', type=int, default=128, help='Networks hidden dimension')

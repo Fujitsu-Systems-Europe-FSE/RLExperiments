@@ -1,3 +1,5 @@
+from typing import List
+from torchvision import transforms
 from collections import namedtuple, deque
 
 import torch
@@ -10,10 +12,20 @@ class ReplayMemory:
 
     def __init__(self, capacity):
         self.memory = deque([], maxlen=capacity)
+        self.transforms = None
+
+    def add_transforms(self, trans: List):
+        self.transforms = transforms.Compose(trans)
 
     def push(self, *args):
         """Save a transition"""
-        self.memory.append(Transition(*args))
+        # assert np.all([t.device.type == 'cpu' for t in args]), 'Tensors must be moved to CPU'
+        data = []
+        for e in args:
+            if type(e) == torch.Tensor:
+                e = e.cpu()
+            data.append(e)
+        self.memory.append(Transition(*data))
 
     def sample(self, batch_size):
         transitions_list = random.sample(self.memory, batch_size)
@@ -33,10 +45,10 @@ class ReplayMemory:
         actions = torch.cat(actions_list, dim=0)
         rewards = torch.cat(rewards_list, dim=0)
 
-        next_states = torch.zeros((len(non_final_states), *non_final_next_states.shape[1:])).to(non_final_next_states.device)
+        next_states = torch.zeros((len(non_final_states), *non_final_next_states.shape[1:]))
         next_states[non_final_masks] = non_final_next_states
 
-        return states, actions, next_states, rewards, non_final_masks.unsqueeze(-1).to(next_states.device)
+        return states, actions, next_states, rewards, non_final_masks.unsqueeze(-1)
 
     def __len__(self):
         return len(self.memory)
