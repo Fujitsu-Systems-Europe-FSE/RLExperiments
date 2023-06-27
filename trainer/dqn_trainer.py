@@ -8,6 +8,7 @@ from apheleia.metrics.metric_store import MetricStore
 from apheleia.metrics.meters import AverageMeter, SumMeter
 
 import torch
+import numpy as np
 
 
 class DQNTrainer(RLTrainer):
@@ -71,6 +72,12 @@ class DQNTrainer(RLTrainer):
                 break
 
             self.global_iter += 1
+
+        if self._thumb_interval > 0 and self.current_epoch % self._thumb_interval == 0:
+            if self._opts.render_mode == 'rgb_array_list':
+                video = self._environment.render()
+                video = np.stack(video).transpose(0, 3, 1, 2)[np.newaxis, ...]
+                self.writer.add_video('episodes/overviews', video, global_step=self.current_epoch)
 
     def _apply_soft_updates(self):
         self._soft_update(self._net['PolicyNet'], self._target_net)

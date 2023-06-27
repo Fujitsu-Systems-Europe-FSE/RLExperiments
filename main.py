@@ -93,7 +93,7 @@ if __name__ == '__main__':
     train_parser.add_argument('--gamma', type=float, default=0.99, help='Discount value')
     train_parser.add_argument('--tau', type=float, default=5e-3, help='Soft update merging factor')
     train_parser.add_argument('--env', dest='env_name', type=str, default='MountainCar-v0', help='Training environment name')
-    train_parser.add_argument('--render-mode', type=str, default=None, help='Environment render mode')
+    train_parser.add_argument('--render-mode', type=str, choices=['human', 'rgb_array_list'], default='rgb_array_list', help='Environment render mode')
     # TODO Batchnorm currently has detrimental effects
     train_parser.add_argument('--with-bn', action='store_true', help='Enables BatchNorm layers in architectures')
 
