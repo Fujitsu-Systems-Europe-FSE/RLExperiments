@@ -1,6 +1,8 @@
 from trainer.dqn_trainer import DQNTrainer
 from apheleia.metrics.metric_store import MetricStore
 from utils.env_exploration import Gaussian, OrnsteinUlhenbeck
+from apheleia.utils.visualize import gradients_norm_hist
+from apheleia.utils.gradients import calc_jacobian_norm, calc_net_gradient_norm
 
 import torch
 
@@ -67,8 +69,23 @@ class ActorCriticTrainer(DQNTrainer):
         self._net['Actor'].train()
         return action
 
-    def _report_stats(self, *args):
-        pass
+    def _report_stats(self, states):
+        if self._stats_interval > 0 and self._step == 0 and self.current_epoch % self._stats_interval == 0 and self.writer is not ...:
+            self._net.eval()
+
+            states.requires_grad = True
+            actions = self._net['Actor'](states)
+            actor_jacobian_norm = calc_jacobian_norm(actions, [states])
+            actor_gradients_norm = calc_net_gradient_norm(self._net['Actor'])
+
+            state_action_values = self._net['Critic'](states, actions)
+            critic_jacobian_norm = calc_jacobian_norm(state_action_values, [actions])
+            critic_gradients_norm = calc_net_gradient_norm(self._net['Critic'])
+
+            gradients_norm_hist(self.writer, 'jacobian', [actor_jacobian_norm, critic_jacobian_norm], self.current_epoch, labels=['w.r.t. inputs (actor)', 'w.r.t. inputs (critic)'])
+            gradients_norm_hist(self.writer, 'weights_grad', [actor_gradients_norm, critic_gradients_norm], self.current_epoch, labels=['w.r.t. weights (actor)', 'w.r.t. weights (critic)'])
+
+            self._net.train()
 
     def get_graph(self) -> torch.nn.Module:
         pass

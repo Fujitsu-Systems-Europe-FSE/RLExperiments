@@ -6,6 +6,8 @@ from utils.env_exploration import EpsilonGreedy
 from apheleia.trainer.rl_trainer import RLTrainer
 from apheleia.metrics.metric_store import MetricStore
 from apheleia.metrics.meters import AverageMeter, SumMeter
+from apheleia.utils.visualize import gradients_norm_hist
+from apheleia.utils.gradients import calc_jacobian_norm, calc_net_gradient_norm
 
 import torch
 import numpy as np
@@ -17,6 +19,7 @@ class DQNTrainer(RLTrainer):
         super().__init__(opts, net, optims, scheds, loss, validator, metrics, ctx, 'RL', *args, **kwargs)
         self._add_metrics()
         self._initial_setup()
+        self._step = 0
 
     def _initial_setup(self):
         self._env_explorer = EpsilonGreedy(self._opts, self._ctx, self._select_action)
@@ -43,14 +46,14 @@ class DQNTrainer(RLTrainer):
         state = to_tensor(state).unsqueeze(0) if memory.transforms is None else memory.transforms(state).unsqueeze(0)
 
         t0 = time()
-        for t in count():
+        for self._step in count():
             action = self._env_explorer.explore(state.to(self._ctx[0]), self.global_iter).cpu()
             formatted_action = action.item() if hasattr(self._environment.action_space, 'n') else action.numpy().flatten()
 
             obs, reward, terminated, truncated, _ = self._environment.step(formatted_action)
             obs = to_tensor(obs).unsqueeze(0) if memory.transforms is None else memory.transforms(obs).unsqueeze(0)
 
-            truncated = (truncated and self._opts.max_steps is None) or (t == self._opts.max_steps)
+            truncated = (truncated and self._opts.max_steps is None) or (self._step == self._opts.max_steps)
             done = terminated or truncated
             next_state = None if terminated else obs
 
@@ -66,7 +69,7 @@ class DQNTrainer(RLTrainer):
             self._metrics_store.update_train({'rewards/episode_rewards': reward})
             if done:
                 self._metrics_store.update_train({
-                    'episodes/duration_in_steps': t + 1,
+                    'episodes/duration_in_steps': self._step + 1,
                     'episodes/duration_in_secs': time() - t0
                 })
                 break
@@ -77,7 +80,7 @@ class DQNTrainer(RLTrainer):
             if self._opts.render_mode == 'rgb_array_list':
                 video = self._environment.render()
                 video = np.stack(video).transpose(0, 3, 1, 2)[np.newaxis, ...]
-                self.writer.add_video('episodes/overviews', video, global_step=self.current_epoch)
+                self.writer.add_video('episodes/overviews', video, global_step=self.current_epoch, fps=60)
 
     def _apply_soft_updates(self):
         self._soft_update(self._net['PolicyNet'], self._target_net)
@@ -107,6 +110,7 @@ class DQNTrainer(RLTrainer):
         self._apply_soft_updates()
 
         # self._log_iteration(batch_idx)
+        self._report_stats(states)
         self._metrics_store.update_train(self._loss.decompose())
 
     def _optimize(self, states, actions, next_states, rewards, masks):
@@ -148,8 +152,19 @@ class DQNTrainer(RLTrainer):
             max_reward, max_index = estimated_rewards.max(dim=1)
             return max_index.view(1, 1)
 
-    def _report_stats(self, *args):
-        pass
+    def _report_stats(self, states):
+        if self._stats_interval > 0 and self._step == 0 and self.current_epoch % self._stats_interval == 0 and self.writer is not ...:
+            self._net.eval()
+
+            states.requires_grad = True
+            estimated_rewards = self._net['PolicyNet'](states)
+            jacobian_norm = calc_jacobian_norm(estimated_rewards, [states])
+            gradients_norm = calc_net_gradient_norm(self._net['PolicyNet'])
+
+            gradients_norm_hist(self.writer, 'jacobian', [jacobian_norm], self.current_epoch, labels=['w.r.t. inputs'])
+            gradients_norm_hist(self.writer, 'weights_grad', [gradients_norm], self.current_epoch, labels=['w.r.t. weights'])
+
+            self._net.train()
 
     def get_graph(self) -> torch.nn.Module:
         pass
