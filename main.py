@@ -71,7 +71,7 @@ def setup_train_env(args):
 
     args.env = env
     # Get the number of state observations
-    args.n_states = 512 if 'screen' in state else len(state)
+    args.n_states = 512 if type(state) == dict and 'screen' in state else len(state)
     # Env is discrete
     if hasattr(env.action_space, 'n'):
         args.n_actions = int(env.action_space.n)
