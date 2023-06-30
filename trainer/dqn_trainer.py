@@ -107,7 +107,8 @@ class DQNTrainer(RLTrainer):
         states, actions, next_states, rewards, masks = tensors
 
         self._optimize(states, actions, next_states, rewards, masks)
-        self._apply_soft_updates()
+        if self.global_iter % self._opts.target_frequency == 0:
+            self._apply_soft_updates()
 
         # self._log_iteration(batch_idx)
         self._report_stats(states)

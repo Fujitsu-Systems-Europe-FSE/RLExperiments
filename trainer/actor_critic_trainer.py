@@ -60,7 +60,8 @@ class ActorCriticTrainer(DQNTrainer):
 
     def _optimize(self, states, actions, next_states, rewards, masks):
         self._optimize_critic(states, actions, next_states, rewards, masks)
-        self._optimize_actor(states)
+        if self.global_iter % self._opts.policy_frequency == 0:
+            self._optimize_actor(states)
 
     def _select_action(self, state):
         self._net['Actor'].eval()

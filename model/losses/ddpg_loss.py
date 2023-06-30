@@ -10,7 +10,10 @@ class DDPGLoss(Loss):
         self.components = ['loss/critic', 'loss/actor']
 
     def decompose(self):
-        return {'loss/critic': [self._critic_loss_value], 'loss/actor': [self._actor_loss_value]}
+        components = {'loss/critic': [self._critic_loss_value]}
+        if hasattr(self, '_actor_loss_value') and self._actor_loss_value is not None:
+            components['loss/actor'] = [self._actor_loss_value]
+        return components
 
     def compute(self, prediction, target):
         raise NotImplemented()
