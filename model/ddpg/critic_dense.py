@@ -24,7 +24,7 @@ class Critic(NeuralNet):
             self._stages.append(build_dense_stack(in_dim, self._opts.hidden_dim, with_bn=self._opts.with_bn))
 
         self._stages = nn.Sequential(*self._stages)
-        self._proj = nn.Linear(self._opts.hidden_dim, self._opts.n_actions, bias=False)
+        self._proj = nn.Linear(self._opts.hidden_dim, 1, bias=False)
 
     def forward(self, state, action):
         x_state = self._state_stages(state)
