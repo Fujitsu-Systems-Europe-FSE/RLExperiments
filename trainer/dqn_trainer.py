@@ -1,11 +1,12 @@
 from torch import nn
 from time import time
 from itertools import count
+from apheleia import ProjectLogger
 from apheleia.utils import to_tensor
 from utils.env_exploration import EpsilonGreedy
+from apheleia.metrics.meters import AverageMeter
 from apheleia.trainer.rl_trainer import RLTrainer
 from apheleia.metrics.metric_store import MetricStore
-from apheleia.metrics.meters import AverageMeter, SumMeter
 from apheleia.utils.visualize import gradients_norm_hist
 from apheleia.utils.gradients import calc_jacobian_norm, calc_net_gradient_norm
 
@@ -34,23 +35,21 @@ class DQNTrainer(RLTrainer):
         return target_net
 
     def _add_metrics(self):
-        reference_metric = SumMeter('')
+        reference_metric = AverageMeter('')
         self._metrics_store.add_target_metric(reference_metric)
-        self._metrics_store.add_train_metric('rewards/episode_rewards', reference_metric)
+        self._metrics_store.add_train_metric('rewards/episodic', reference_metric)
         self._metrics_store.add_train_metric('episodes/duration_in_steps', AverageMeter(''))
         self._metrics_store.add_train_metric('episodes/duration_in_secs', AverageMeter(''))
 
     def _train_loop(self, memory, *args, **kwargs):
         # Initialize the environment and get it's state
-        state, info = self._environment.reset()
+        state, _ = self._environment.reset()
         state = to_tensor(state).unsqueeze(0) if memory.transforms is None else memory.transforms(state).unsqueeze(0)
 
         t0 = time()
         for self._step in count():
-            action = self._env_explorer.explore(state.to(self._ctx[0]), self.global_iter).cpu()
-            formatted_action = action.item() if hasattr(self._environment.action_space, 'n') else action.numpy().flatten()
-
-            obs, reward, terminated, truncated, _ = self._environment.step(formatted_action)
+            action, fmt_action = self._env_explorer.explore(state.to(self._ctx[0]), self.global_iter)
+            obs, reward, terminated, truncated, infos = self._environment.step(fmt_action)
             obs = to_tensor(obs).unsqueeze(0) if memory.transforms is None else memory.transforms(obs).unsqueeze(0)
 
             truncated = (truncated and self._opts.max_steps is None) or (self._step == self._opts.max_steps)
@@ -66,17 +65,19 @@ class DQNTrainer(RLTrainer):
             # Perform one step of the optimization (on the policy network)
             self._sample_and_optimize(memory)
 
-            self._metrics_store.update_train({'rewards/episode_rewards': reward})
             if done:
-                self._metrics_store.update_train({
-                    'episodes/duration_in_steps': self._step + 1,
-                    'episodes/duration_in_secs': time() - t0
-                })
+                if self.global_iter > self._opts.learning_starts:
+                    self._metrics_store.update_train({
+                        'rewards/episodic': infos['episode']['r'].item(),
+                        'episodes/duration_in_steps': self._step + 1,
+                        'episodes/duration_in_secs': time() - t0
+                    })
                 break
 
             self.global_iter += 1
+        ProjectLogger().info('[Epoch {}] -- {} iteration(s) --'.format(self.current_epoch, self.global_iter))
 
-        if self._thumb_interval > 0 and self.current_epoch % self._thumb_interval == 0:
+        if self._thumb_interval > 0 and self.current_epoch % self._thumb_interval == 0 and self.global_iter > self._opts.learning_starts:
             if self._opts.render_mode == 'rgb_array_list':
                 video = self._environment.render()
                 video = np.stack(video).transpose(0, 3, 1, 2)[np.newaxis, ...]
@@ -100,7 +101,7 @@ class DQNTrainer(RLTrainer):
         target_net.load_state_dict(target_state_dict)
 
     def _sample_and_optimize(self, memory):
-        if len(memory) < self._opts.batch_size:
+        if len(memory) < self._opts.batch_size or self.global_iter < self._opts.learning_starts:
             return
 
         tensors = [t.to(self._ctx[0]) for t in memory.sample(self._opts.batch_size)]
@@ -110,7 +111,6 @@ class DQNTrainer(RLTrainer):
         if self.global_iter % self._opts.target_frequency == 0:
             self._apply_soft_updates()
 
-        # self._log_iteration(batch_idx)
         self._report_stats(states)
         self._metrics_store.update_train(self._loss.decompose())
 
