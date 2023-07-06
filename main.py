@@ -67,6 +67,10 @@ def setup_train_env(args):
         ])
 
     env = gym.make(args.env_name, render_mode=args.render_mode)
+    env = gym.wrappers.RecordEpisodeStatistics(env)
+    env.action_space.seed(args.seed)
+    env.observation_space.seed(args.seed)
+
     state, info = env.reset()
 
     args.env = env
@@ -92,6 +96,7 @@ if __name__ == '__main__':
     train_parser.add_argument('--mem-size', type=int, default=int(1e6), help='Replay memory size')
     train_parser.add_argument('--gamma', type=float, default=0.99, help='Discount value')
     train_parser.add_argument('--tau', type=float, default=5e-3, help='Soft update merging factor')
+    train_parser.add_argument('--learning-starts', type=int, default=25e3, help='Start learning after trying the given number of actions')
     train_parser.add_argument('--target-frequency', type=int, default=1, help='Frequency of training target networks in steps (delayed)')
     train_parser.add_argument('--policy-frequency', type=int, default=1, help='Frequency of training policy in steps  (delayed)')
     train_parser.add_argument('--env', dest='env_name', type=str, default='MountainCar-v0', help='Training environment name')
