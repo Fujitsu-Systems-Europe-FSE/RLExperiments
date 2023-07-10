@@ -4,12 +4,17 @@ from model import build_dense_stack
 from torch.nn import functional as F
 from apheleia.model import NeuralNet
 
+import torch
+
 
 class Actor(NeuralNet):
 
     def __init__(self, opts):
         super().__init__(opts)
-        self._rescale_factor = self._opts.max_action if hasattr(self._opts, 'max_action') else 1
+
+        # Save along model parameters but will be ignored by optimizers
+        self.register_buffer('_action_scale', torch.tensor((self._opts.max_actions - self._opts.min_actions) / 2.0))
+        self.register_buffer('_action_bias', torch.tensor((self._opts.max_actions + self._opts.min_actions) / 2.0))
 
     def _build_structure(self):
         n_layers = 2
@@ -20,11 +25,11 @@ class Actor(NeuralNet):
             stages.append(build_dense_stack(in_dim, self._opts.hidden_dim, with_bn=self._opts.with_bn))
 
         self._stages = nn.Sequential(*stages)
-        self._proj = nn.Linear(self._opts.hidden_dim, self._opts.n_actions, bias=False)
+        self._proj = nn.Linear(self._opts.hidden_dim, self._opts.n_actions, bias=True)
 
     def forward(self, x):
         x = self._stages(x)
-        return F.tanh(self._proj(x)) * self._rescale_factor
+        return F.tanh(self._proj(x)) * self._action_scale + self._action_bias
 
     @staticmethod
     def model_name():
