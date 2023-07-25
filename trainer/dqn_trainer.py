@@ -49,15 +49,15 @@ class DQNTrainer(RLTrainer):
         t0 = time()
         for self._step in count():
             action, fmt_action = self._env_explorer.explore(state.to(self._ctx[0]), self.global_iter)
-            obs, reward, terminated, truncated, infos = self._environment.step(fmt_action)
-            obs = to_tensor(obs).unsqueeze(0) if memory.transforms is None else memory.transforms(obs).unsqueeze(0)
+            next_state, reward, terminated, truncated, infos = self._environment.step(fmt_action)
+            next_state = to_tensor(next_state).unsqueeze(0) if memory.transforms is None else memory.transforms(next_state).unsqueeze(0)
 
             truncated = (truncated and self._opts.max_steps is None) or (self._step == self._opts.max_steps)
             done = terminated or truncated
-            next_state = None if terminated else obs
+            # next_state = None if terminated else obs
 
             # Store the transition in memory
-            memory.push(state, action, next_state, to_tensor([[reward]]))
+            memory.push(state, action, next_state, reward, done)
 
             # Move to the next state
             state = next_state
@@ -104,16 +104,16 @@ class DQNTrainer(RLTrainer):
             return
 
         tensors = [t.to(self._ctx[0]) for t in memory.sample(self._opts.batch_size)]
-        states, actions, next_states, rewards, masks = tensors
+        states, actions, next_states, rewards, dones = tensors
 
-        self._optimize(states, actions, next_states, rewards, masks)
+        self._optimize(states, actions, next_states, rewards, dones)
         if self.global_iter % self._opts.target_frequency == 0:
             self._apply_soft_updates()
 
         self._report_stats(states)
         self._metrics_store.update_train(self._loss.decompose())
 
-    def _optimize(self, states, actions, next_states, rewards, masks):
+    def _optimize(self, states, actions, next_states, rewards, dones):
         # Compute Q(s_t, a) - the model computes Q(s_t), then we select the
         # columns of actions taken. These are the actions which would've been taken
         # for each batch state according to policy_net
@@ -126,7 +126,7 @@ class DQNTrainer(RLTrainer):
         # This is merged based on the mask, such that we'll have either the expected
         # state value or 0 in case the state was final.
         with torch.no_grad():
-            estimated_rewards = self._target_net(next_states) * masks
+            estimated_rewards = self._target_net(next_states) * (1 - dones)
             next_state_action_values, _ = estimated_rewards.max(keepdims=True, dim=1)
 
         # Compute the expected Q values

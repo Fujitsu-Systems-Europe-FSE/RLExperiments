@@ -25,13 +25,13 @@ class ActorCriticTrainer(DQNTrainer):
         self._soft_update(self._net['Actor'], self._target_actor)
         self._soft_update(self._net['Critic'], self._target_critic)
 
-    def _optimize_critic(self, states, actions, next_states, rewards, masks):
+    def _optimize_critic(self, states, actions, next_states, rewards, dones):
         # compute state_action_values for St+1
         with torch.no_grad():
             # produce a continuous action given a state
             estimated_actions = self._target_actor(next_states)
             # evaluate actions quality for a given state
-            next_state_action_values = self._target_critic(next_states, estimated_actions) * masks
+            next_state_action_values = self._target_critic(next_states, estimated_actions) * (1 - dones)
 
             expected_next_state_action_values = rewards + self._opts.gamma * next_state_action_values
 
