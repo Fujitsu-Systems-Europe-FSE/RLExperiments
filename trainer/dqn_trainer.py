@@ -75,7 +75,6 @@ class DQNTrainer(RLTrainer):
                 break
 
             self.global_iter += 1
-        ProjectLogger().info('[Epoch {}] -- {} iteration(s) --'.format(self.current_epoch, self.global_iter))
 
         if self._thumb_interval > 0 and self.current_epoch % self._thumb_interval == 0 and self.global_iter > self._opts.learning_starts:
             if self._opts.render_mode == 'rgb_array_list':
