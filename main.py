@@ -1,5 +1,5 @@
 from torchvision import transforms
-
+from functools import partial
 from apheleia.app import App
 from vizdoom import gymnasium_wrapper
 from model.ddpg.actor_cnn import Actor as CnnActor
@@ -16,6 +16,7 @@ from apheleia.metrics.metric_store import MetricStore
 from trainer.actor_critic_trainer import ActorCriticTrainer
 from apheleia.catalog import PipelinesCatalog, LossesCatalog
 
+import numpy as np
 import gymnasium as gym
 
 LossesCatalog()['RL'] = {
@@ -58,6 +59,14 @@ PipelinesCatalog()['RL'] = {
 }
 
 
+def make_env(args):
+    env = gym.make(args.env_name, render_mode=args.render_mode)
+    env = gym.wrappers.RecordEpisodeStatistics(env)
+    env.action_space.seed(args.seed)
+    env.observation_space.seed(args.seed)
+    return env
+
+
 def setup_train_env(args):
     memory = ReplayMemory(int(args.mem_size))
     if args.env_name.startswith('Vizdoom'):
@@ -66,24 +75,22 @@ def setup_train_env(args):
             transforms.ToTensor()
         ])
 
-    env = gym.make(args.env_name, render_mode=args.render_mode)
-    env = gym.wrappers.RecordEpisodeStatistics(env)
-    env.action_space.seed(args.seed)
-    env.observation_space.seed(args.seed)
+    env = gym.vector.SyncVectorEnv([partial(make_env, args) for _ in range(args.vectorize)])
+    # env = make_env(args)
 
     state, info = env.reset()
 
     args.env = env
     # Get the number of state observations
-    args.n_states = 512 if type(state) == dict and 'screen' in state else len(state)
-    # Env is discrete
-    if hasattr(env.action_space, 'n'):
-        args.n_actions = int(env.action_space.n)
-    else:
-        action_space = env.action_space.spaces['continuous'] if hasattr(env.action_space, 'spaces') else env.action_space
+    args.n_states = state.shape[-1] if type(state) == np.ndarray else 512
+    if type(env.single_action_space) == gym.spaces.Box:
+        action_space = env.single_action_space.spaces['continuous'] if hasattr(env.single_action_space, 'spaces') else env.single_action_space
         args.n_actions = action_space.shape[0]
         args.min_actions = action_space.low
         args.max_actions = action_space.high
+    else:
+        # Env is discrete
+        args.n_actions = int(env.single_action_space.n)
 
     return memory, None, None
 
@@ -103,6 +110,7 @@ if __name__ == '__main__':
     train_parser.add_argument('--render-mode', type=str, choices=['human', 'rgb_array_list'], default='rgb_array_list', help='Environment render mode')
     # TODO Batchnorm currently has detrimental effects
     train_parser.add_argument('--with-bn', action='store_true', help='Enables BatchNorm layers in architectures')
+    train_parser.add_argument('--vectorize', type=int, default=1, help='Number of vectorized environments for parallel env exploration')
 
     rl_exp.add_bootstrap('train', setup_train_env)
     rl_exp.run()

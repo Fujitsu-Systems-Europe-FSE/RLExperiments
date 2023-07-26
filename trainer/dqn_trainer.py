@@ -44,16 +44,16 @@ class DQNTrainer(RLTrainer):
     def _train_loop(self, memory, *args, **kwargs):
         # Initialize the environment and get it's state
         state, _ = self._environment.reset()
-        state = to_tensor(state).unsqueeze(0) if memory.transforms is None else memory.transforms(state).unsqueeze(0)
+        state = to_tensor(state) if memory.transforms is None else memory.transforms(state)
 
         t0 = time()
         for self._step in count():
             action, fmt_action = self._env_explorer.explore(state.to(self._ctx[0]), self.global_iter)
             next_state, reward, terminated, truncated, infos = self._environment.step(fmt_action)
-            next_state = to_tensor(next_state).unsqueeze(0) if memory.transforms is None else memory.transforms(next_state).unsqueeze(0)
+            next_state = to_tensor(next_state) if memory.transforms is None else memory.transforms(next_state)
 
-            truncated = (truncated and self._opts.max_steps is None) or (self._step == self._opts.max_steps)
-            done = terminated or truncated
+            truncated = truncated | (self._step == self._opts.max_steps)
+            done = terminated | truncated
             # next_state = None if terminated else obs
 
             # Store the transition in memory
@@ -68,7 +68,7 @@ class DQNTrainer(RLTrainer):
             if done:
                 if self.global_iter > self._opts.learning_starts:
                     self._metrics_store.update_train({
-                        'rewards/episodic': infos['episode']['r'].item(),
+                        'rewards/episodic': infos['final_info'][0]['episode']['r'].item(),
                         'episodes/duration_in_steps': self._step + 1,
                         'episodes/duration_in_secs': time() - t0
                     })
@@ -79,7 +79,7 @@ class DQNTrainer(RLTrainer):
         if self._thumb_interval > 0 and self.current_epoch % self._thumb_interval == 0 and self.global_iter > self._opts.learning_starts:
             if self._opts.render_mode == 'rgb_array_list':
                 video = self._environment.render()
-                video = np.stack(video).transpose(0, 3, 1, 2)[np.newaxis, ...]
+                video = np.stack(video).transpose((0, 3, 1, 2))[np.newaxis, ...]
                 self.writer.add_video('episodes/overviews', video, global_step=self.current_epoch, fps=60)
 
     def _apply_soft_updates(self):
@@ -118,7 +118,7 @@ class DQNTrainer(RLTrainer):
         # columns of actions taken. These are the actions which would've been taken
         # for each batch state according to policy_net
         with torch.cuda.amp.autocast(self._opts.fp16):
-            state_action_values = self._net['PolicyNet'](states).gather(1, actions)
+            state_action_values = self._net['PolicyNet'](states).gather(-1, actions)
 
         # Compute V(s_{t+1}) for all next states.
         # Expected values of actions for non_final_next_states are computed based

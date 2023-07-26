@@ -17,10 +17,13 @@ class EnvExplorer(metaclass=ABCMeta):
         self._select_action = action_delegate
 
     def explore(self, state, global_iter, *args, **kwargs):
-        action = torch.tensor(self._environment.action_space.sample()).unsqueeze(0)
+        action = torch.tensor(self._environment.action_space.sample())
+        if len(action.shape) == 1:
+            action = action.unsqueeze(-1)
+
         if global_iter > self._opts.learning_starts:
             action = self._explore(state, global_iter, *args, **kwargs)
-        fmt_action = action.item() if hasattr(self._environment.action_space, 'n') else action.cpu().numpy().flatten()
+        fmt_action = action.item() if hasattr(self._environment.action_space, 'n') else action.cpu().numpy()#.flatten()
         return action, fmt_action
 
     @staticmethod
@@ -42,7 +45,7 @@ class EpsilonGreedy(EnvExplorer):
             return self._select_action(state)
         else:
             sample = self._env.action_space.sample()
-            sample = torch.tensor([[sample]], dtype=torch.long) if type(sample) == np.int64 else sample['continuous']
+            sample = torch.tensor([sample], dtype=torch.long) if sample.dtype == np.int64 else sample['continuous']
             return sample.to(self._ctx[0])
 
 

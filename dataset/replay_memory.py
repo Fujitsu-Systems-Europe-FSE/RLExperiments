@@ -21,7 +21,7 @@ class ReplayMemory:
         """Save a transition"""
         # assert np.all([t.device.type == 'cpu' for t in args]), 'Tensors must be moved to CPU'
         data = [e.cpu() for e in args[:-2]]
-        data += [torch.tensor(e).unsqueeze(-1).unsqueeze(-1) for e in args[-2:]]
+        data += [torch.tensor(e).unsqueeze(-1) for e in args[-2:]]
 
         self.memory.append(Transition(*data))
 
