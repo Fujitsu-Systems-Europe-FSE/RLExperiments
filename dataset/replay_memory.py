@@ -4,6 +4,7 @@ from collections import namedtuple, deque
 
 import torch
 import random
+import numpy as np
 
 Transition = namedtuple('Transition', ('state', 'action', 'next_state', 'reward', 'done'))
 
@@ -19,11 +20,19 @@ class ReplayMemory:
 
     def push(self, *args):
         """Save a transition"""
-        # assert np.all([t.device.type == 'cpu' for t in args]), 'Tensors must be moved to CPU'
-        data = [e.cpu() for e in args[:-2]]
-        data += [torch.tensor(e).unsqueeze(-1) for e in args[-2:]]
+        data = []
+        for e in args:
+            if type(e) == torch.Tensor:
+                data.append(e.cpu().numpy())
+            elif e.dtype == np.float64:
+                data.append(e.astype(np.float32))
+            else:
+                data.append(e)
 
-        self.memory.append(Transition(*data))
+        # split vectorized data
+        data = [np.split(t, t.shape[0], axis=0) for t in data]
+        for s, a, n, r, d in zip(*data):
+            self.memory.append(Transition(s, a, n, r, d))
 
     def sample(self, batch_size):
         transitions_list = random.sample(self.memory, batch_size)
@@ -33,22 +42,18 @@ class ReplayMemory:
         # batch = Transition(*zip(*transitions_list))
         states_list, actions_list, next_states_list, rewards_list, dones_list = map(tuple, zip(*transitions_list))
 
-        # Compute a mask of non-final states and concatenate the batch elements
-        # (a final state would've been the one after which simulation ended)
-        # non_final_states = list(map(lambda s: s is not None, next_states_list))
-        # non_final_masks = torch.tensor(non_final_states)
-        # non_final_next_states = torch.cat([s for s in next_states_list if s is not None])
+        states = np.concatenate(states_list, axis=0)
+        next_states = np.concatenate(next_states_list, axis=0)
+        actions = np.concatenate(actions_list, axis=0)
+        rewards = np.stack(rewards_list, axis=0)
+        dones = np.stack(dones_list, axis=0)
 
-        states = torch.cat(states_list, dim=0)
-        next_states = torch.cat(next_states_list, dim=0)
-        actions = torch.cat(actions_list, dim=0)
-        rewards = torch.cat(rewards_list, dim=0).float()
-        dones = torch.cat(dones_list, dim=0).float()
+        states = torch.tensor(states)
+        next_states = torch.tensor(next_states)
+        actions = torch.tensor(actions)#.float()
+        rewards = torch.tensor(rewards)#.float()
+        dones = torch.tensor(dones).int()
 
-        # next_states = torch.zeros((len(non_final_states), *non_final_next_states.shape[1:]))
-        # next_states[non_final_masks] = non_final_next_states
-
-        # return states, actions, next_states, rewards, non_final_masks.unsqueeze(-1)
         return states, actions, next_states, rewards, dones
 
     def __len__(self):

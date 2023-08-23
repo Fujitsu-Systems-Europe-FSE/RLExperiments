@@ -64,14 +64,16 @@ class ActorCriticTrainer(DQNTrainer):
             self._optimize_actor(states)
 
     def _select_action(self, state):
-        self._net['Actor'].eval()
+        if type(state) != torch.Tensor:
+            state = torch.tensor(state).to(self._ctx[0])
+
         with torch.no_grad():
             action = self._net['Actor'](state)
-        self._net['Actor'].train()
+
         return action
 
     def _report_stats(self, states):
-        if self._stats_interval > 0 and self._step == 0 and self.current_epoch % self._stats_interval == 0 and self.writer is not ...:
+        if self._stats_interval > 0 and self.global_iter % self._stats_interval == 0 and self.writer is not ...:
             self._net.eval()
 
             states.requires_grad = True
@@ -83,8 +85,8 @@ class ActorCriticTrainer(DQNTrainer):
             critic_jacobian_norm = calc_jacobian_norm(state_action_values, [actions])
             critic_gradients_norm = calc_net_gradient_norm(self._net['Critic'])
 
-            gradients_norm_hist(self.writer, 'jacobian', [actor_jacobian_norm, critic_jacobian_norm], self.current_epoch, labels=['w.r.t. inputs (actor)', 'w.r.t. inputs (critic)'])
-            gradients_norm_hist(self.writer, 'weights_grad', [actor_gradients_norm, critic_gradients_norm], self.current_epoch, labels=['w.r.t. weights (actor)', 'w.r.t. weights (critic)'])
+            gradients_norm_hist(self.writer, 'jacobian', [actor_jacobian_norm, critic_jacobian_norm], self.global_iter, labels=['w.r.t. inputs (actor)', 'w.r.t. inputs (critic)'])
+            gradients_norm_hist(self.writer, 'weights_grad', [actor_gradients_norm, critic_gradients_norm], self.global_iter, labels=['w.r.t. weights (actor)', 'w.r.t. weights (critic)'])
 
             self._net.train()
 

@@ -1,5 +1,7 @@
 from torchvision import transforms
 from functools import partial
+
+from apheleia import ProjectLogger
 from apheleia.app import App
 from vizdoom import gymnasium_wrapper
 from model.ddpg.actor_cnn import Actor as CnnActor
@@ -59,8 +61,9 @@ PipelinesCatalog()['RL'] = {
 }
 
 
-def make_env(args):
-    env = gym.make(args.env_name, render_mode=args.render_mode)
+def make_env(num, args):
+    render_mode = args.render_mode if num == 0 else 'rgb_array_list'
+    env = gym.make(args.env_name, render_mode=render_mode)
     env = gym.wrappers.RecordEpisodeStatistics(env)
     env.action_space.seed(args.seed)
     env.observation_space.seed(args.seed)
@@ -72,11 +75,10 @@ def setup_train_env(args):
     if args.env_name.startswith('Vizdoom'):
         memory.add_transforms([
             transforms.Lambda(lambda x: x['screen']),
-            transforms.ToTensor()
+            transforms.Lambda(lambda x: np.stack([transforms.ToTensor()(t.squeeze()) for t in np.split(x, x.shape[0], axis=0)], axis=0))
         ])
 
-    env = gym.vector.SyncVectorEnv([partial(make_env, args) for _ in range(args.vectorize)])
-    # env = make_env(args)
+    env = gym.vector.SyncVectorEnv([partial(make_env, i, args) for i in range(args.vectorize)])
 
     state, info = env.reset()
 

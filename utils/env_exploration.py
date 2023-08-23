@@ -1,8 +1,6 @@
-from abc import abstractmethod, ABCMeta
+from abc import ABCMeta
 
-import copy
 import math
-import torch
 import random
 import numpy as np
 
@@ -17,14 +15,11 @@ class EnvExplorer(metaclass=ABCMeta):
         self._select_action = action_delegate
 
     def explore(self, state, global_iter, *args, **kwargs):
-        action = torch.tensor(self._environment.action_space.sample())
-        if len(action.shape) == 1:
-            action = action.unsqueeze(-1)
-
+        action = self._environment.action_space.sample()
         if global_iter > self._opts.learning_starts:
             action = self._explore(state, global_iter, *args, **kwargs)
-        fmt_action = action.item() if hasattr(self._environment.action_space, 'n') else action.cpu().numpy()#.flatten()
-        return action, fmt_action
+
+        return action.item() if hasattr(self._environment.action_space, 'n') else action
 
     @staticmethod
     def _explore(self, state, global_iter, *args, **kwargs):
@@ -42,11 +37,11 @@ class EpsilonGreedy(EnvExplorer):
         sample = random.random()
         eps_threshold = self._eps_end + (self._eps_start - self._eps_end) * math.exp(-1. * global_iter / self._eps_decay)
         if sample > eps_threshold:
-            return self._select_action(state)
+            return self._select_action(state).cpu().numpy()
         else:
             sample = self._env.action_space.sample()
-            sample = torch.tensor([sample], dtype=torch.long) if sample.dtype == np.int64 else sample['continuous']
-            return sample.to(self._ctx[0])
+            sample = sample if sample.dtype == np.int64 else sample['continuous']
+            return sample
 
 
 class Gaussian(EnvExplorer):
@@ -54,14 +49,13 @@ class Gaussian(EnvExplorer):
         super().__init__(opts, ctx, action_delegate)
         self._opts = opts
         self._mu = 0
+        # self._exploration_noise = .1
         self._sigma = 1
 
     def _explore(self, state, global_iter, **kwargs):
-        action = self._select_action(state)
-        noise = torch.normal(self._mu, self._sigma, size=action.shape).to(action.device)
-        mini = torch.tensor(self._opts.min_actions).to(action.device)
-        maxi = torch.tensor(self._opts.max_actions).to(action.device)
-        return (action + noise).clamp(mini, maxi)
+        action = self._select_action(state).cpu().numpy()
+        noise = np.random.normal(self._mu, self._sigma, size=action.shape).astype(np.float32)
+        return (action + noise).clip(self._opts.min_actions, self._opts.max_actions)
 
 
 class OrnsteinUlhenbeck(EnvExplorer):
@@ -81,17 +75,14 @@ class OrnsteinUlhenbeck(EnvExplorer):
         noise = (
             self.prev_noise
             + self.theta * (self.mu - self.prev_noise) * self.dt
-            + self.sigma * np.sqrt(self.dt) * np.random.normal(size=self.mu.shape)
+            + self.sigma * np.sqrt(self.dt) * np.random.normal(size=self.mu.shape).astype(np.float32)
         )
         # Store x into x_prev
         # Makes next noise dependent on current one
         self.prev_noise = noise
 
-        action = self._select_action(state)
-        noise = torch.tensor(noise, dtype=torch.float32).to(action.device)
-        mini = torch.tensor(self._opts.min_actions).to(action.device)
-        maxi = torch.tensor(self._opts.max_actions).to(action.device)
-        return (noise + action).clamp(mini, maxi)
+        action = self._select_action(state).cpu().numpy()
+        return (noise + action).clip(self._opts.min_actions, self._opts.max_actions)
 
     def reset(self):
         if self.initial_noise is not None:

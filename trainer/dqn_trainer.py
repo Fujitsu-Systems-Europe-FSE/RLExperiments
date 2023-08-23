@@ -1,6 +1,5 @@
 from torch import nn
-from time import time
-from itertools import count
+
 from apheleia import ProjectLogger
 from apheleia.utils import to_tensor
 from utils.env_exploration import EpsilonGreedy
@@ -20,7 +19,7 @@ class DQNTrainer(RLTrainer):
         super().__init__(opts, net, optims, scheds, loss, validator, metrics, ctx, 'RL', *args, **kwargs)
         self._add_metrics()
         self._initial_setup()
-        self._step = 0
+        self._state = ...
 
     def _initial_setup(self):
         self._env_explorer = EpsilonGreedy(self._opts, self._ctx, self._select_action)
@@ -41,47 +40,56 @@ class DQNTrainer(RLTrainer):
         self._metrics_store.add_train_metric('episodes/duration_in_steps', AverageMeter(''))
         self._metrics_store.add_train_metric('episodes/duration_in_secs', AverageMeter(''))
 
-    def _train_loop(self, memory, *args, **kwargs):
+    def _pre_loop_hook(self, memory, *args):
+        # https://gymnasium.farama.org/api/vector/
+        # Vectorized environments are automatically reset
         # Initialize the environment and get it's state
-        state, _ = self._environment.reset()
-        state = to_tensor(state) if memory.transforms is None else memory.transforms(state)
+        if self.global_iter == 0:
+            try:
+                self._state, _ = self._environment.reset(seed=self._opts.seed)
+            except Exception as e:
+                ProjectLogger().warning(f'Failed to seed environment : {e}')
+                self._state, _ = self._environment.reset()
+            self._state = self._state if memory.transforms is None else memory.transforms(self._state)
 
-        t0 = time()
-        for self._step in count():
-            action, fmt_action = self._env_explorer.explore(state.to(self._ctx[0]), self.global_iter)
-            next_state, reward, terminated, truncated, infos = self._environment.step(fmt_action)
-            next_state = to_tensor(next_state) if memory.transforms is None else memory.transforms(next_state)
+    def _train_loop(self, memory, *args, **kwargs):
+        action = self._env_explorer.explore(self._state, self.global_iter)
+        next_state, reward, terminated, truncated, infos = self._environment.step(action)
+        next_state = next_state if memory.transforms is None else memory.transforms(next_state)
 
-            truncated = truncated | (self._step == self._opts.max_steps)
-            done = terminated | truncated
-            # next_state = None if terminated else obs
-
-            # Store the transition in memory
-            memory.push(state, action, next_state, reward, done)
-
-            # Move to the next state
-            state = next_state
-
-            # Perform one step of the optimization (on the policy network)
-            self._sample_and_optimize(memory)
-
-            if done:
-                if self.global_iter > self._opts.learning_starts:
-                    self._metrics_store.update_train({
-                        'rewards/episodic': infos['final_info'][0]['episode']['r'].item(),
-                        'episodes/duration_in_steps': self._step + 1,
-                        'episodes/duration_in_secs': time() - t0
-                    })
+        if 'final_info' in infos:
+            for info in infos['final_info']:
+                if info is None:
+                    continue
+                self._metrics_store.update_train({
+                    'rewards/episodic': info['episode']['r'].item(),
+                    'episodes/duration_in_steps': info['episode']['l'].item(),
+                    'episodes/duration_in_secs': info['episode']['t'].item()
+                })
+                self._log_epoch()
                 break
 
-            self.global_iter += 1
+        real_next_state = next_state.copy()
+        for idx, trunc in enumerate(truncated):
+            if trunc:
+                real_next_state[idx] = infos['final_observation'][idx]
 
-        # TODO Repair video
-        # if self._thumb_interval > 0 and self.current_epoch % self._thumb_interval == 0 and self.global_iter > self._opts.learning_starts:
-        #     if self._opts.render_mode == 'rgb_array_list':
-        #         video = self._environment.render()
-        #         video = np.stack(video).transpose((0, 3, 1, 2))[np.newaxis, ...]
-        #         self.writer.add_video('episodes/overviews', video, global_step=self.current_epoch, fps=60)
+        # Store the transition in memory
+        memory.push(self._state, action, real_next_state, reward, terminated)
+
+        # Move to the next state
+        self._state = next_state
+
+        # Perform one step of the optimization (on the policy network)
+        self._sample_and_optimize(memory)
+
+        self.global_iter += self._opts.vectorize
+
+        if self._thumb_interval > 0 and self.global_iter % self._thumb_interval == 0 and self.global_iter > self._opts.learning_starts:
+            if self._opts.render_mode == 'rgb_array_list':
+                video = self._environment.envs[0].render()
+                video = np.stack(video).transpose((0, 3, 1, 2))[np.newaxis, ...]
+                self.writer.add_video('episodes/overviews', video, global_step=self.global_iter, fps=60)
 
     def _apply_soft_updates(self):
         self._soft_update(self._net['PolicyNet'], self._target_net)
@@ -119,7 +127,7 @@ class DQNTrainer(RLTrainer):
         # columns of actions taken. These are the actions which would've been taken
         # for each batch state according to policy_net
         with torch.cuda.amp.autocast(self._opts.fp16):
-            state_action_values = self._net['PolicyNet'](states).gather(-1, actions)
+            state_action_values = self._net['PolicyNet'](states).gather(-1, actions.view(-1, 1))
 
         # Compute V(s_{t+1}) for all next states.
         # Expected values of actions for non_final_next_states are computed based
@@ -146,15 +154,18 @@ class DQNTrainer(RLTrainer):
         self._scaler.update()
 
     def _select_action(self, state):
+        if type(state) != torch.Tensor:
+            state = torch.tensor(state).to(self._ctx[0])
+
         with torch.no_grad():
             # Pick action with the larger expected reward.
             # argmax Q(s, a)
             estimated_rewards = self._net['PolicyNet'](state)
             max_reward, max_index = estimated_rewards.max(dim=1)
-            return max_index.view(1, 1)
+            return max_index#.view(1, 1)
 
     def _report_stats(self, states):
-        if self._stats_interval > 0 and self._step == 0 and self.current_epoch % self._stats_interval == 0 and self.writer is not ...:
+        if self._stats_interval > 0 and self.global_iter % self._stats_interval == 0 and self.writer is not ...:
             self._net.eval()
 
             states.requires_grad = True
@@ -162,8 +173,8 @@ class DQNTrainer(RLTrainer):
             jacobian_norm = calc_jacobian_norm(estimated_rewards, [states])
             gradients_norm = calc_net_gradient_norm(self._net['PolicyNet'])
 
-            gradients_norm_hist(self.writer, 'jacobian', [jacobian_norm], self.current_epoch, labels=['w.r.t. inputs'])
-            gradients_norm_hist(self.writer, 'weights_grad', [gradients_norm], self.current_epoch, labels=['w.r.t. weights'])
+            gradients_norm_hist(self.writer, 'jacobian', [jacobian_norm], self.global_iter, labels=['w.r.t. inputs'])
+            gradients_norm_hist(self.writer, 'weights_grad', [gradients_norm], self.global_iter, labels=['w.r.t. weights'])
 
             self._net.train()
 
